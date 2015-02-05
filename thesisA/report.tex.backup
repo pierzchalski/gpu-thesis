@@ -1,0 +1,27 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{multicol}
+
+\setlength{\columnsep}{12pt}
+
+%opening
+\title{Work Scheduling over Heterogeneous Resources}
+\author{Edward Pierzchalski}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+
+\end{abstract}
+
+\pagebreak
+
+\begin{multicols}{2}
+
+\section{Introduction}
+
+\end{multicols}
+
+\end{document}
