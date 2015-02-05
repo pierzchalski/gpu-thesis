@@ -2,31 +2,74 @@
 \usepackage[a4paper,margin=2cm]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage{multicol}
+\usepackage{setspace}
+\usepackage[]{natbib}
+\usepackage[usenames]{color}
 
-\setlength{\columnsep}{18pt}
+\newcommand{\red}[1]{\textcolor{red}{#1}}
 
-%opening
-\title{Work Scheduling over Heterogeneous Resources}
-\author{Edward Pierzchalski}
+\onehalfspace
+\setlength{\columnsep}{1cm}
+\raggedcolumns
+
+\title{Work Scheduling on Heterogeneous Resources}
+\date{\today}
+\author{Gabi Keller\\\small{Supervisor} \and Edward Pierzchalski}
 
 \begin{document}
 
 \maketitle
 
+\begin{multicols*}{2}
+
 \begin{abstract}
-
+\red{$<$TODO$>$}
 \end{abstract}
-
-\pagebreak
-
-\begin{multicols}{2}
 
 \section{Introduction}
 
+There are two notable trends in computer hardware. First, CPUs are gaining cores per chip while having reduced gains in clock speed. Second, GPUs are developing into generic computing units. As more computing problems are found to be solvable through parallelism, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
+
+\red{Something comparing the issues of low-level, imperative CUDA/OpenCL code with higher-level DSLs, something else comparing DSLs with specialised GPU/vector languages such as Halide and NOVA.}
+
+
+\subsection{Goals}
+
+By the end of this thesis, Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan)} into `jobs' that can be scheduled \red{(dynamically? statically? leave that for later?)} onto a heterogeneous set of workers (CPUs, GPUs) \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')}.
+
+
 \section{Background}
+
+A large body of work has been produced on generation of parallel code for the GPU and for the CPU, however less has been done on the problem of doing both for a single general-purpose program. Previous work has investigated dynamic scheduling of a task composed of kernesl, however the kernels had to have both CPU and GPU versions provided by the user of the library. \red{(cite)} Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
+
+Accelerate is an EDSL embedded in Haskell, designed for general purpose GPU programming. However, some parts of computation are better suited for the less concurrent, higher speed processing of the CPU than the highly concurrent processing of a GPU. Examples: generic fold and scan are highly sequential, whereas their monoid versions are not. Map and stencil are iconically `embarrasingly parallel', and so should preferably go on the GPU. \red{(What are the other array DSL constructs? Are there any stateful iterators/transducers? Should they be mentioned here?)}
+
+In addition to scheduling tasks based off of computational structure, even purely parallel problems can benefit from also being split onto the CPU. \red{(cite Ryan/Trevor, words about how CPUs can significantly assist a GPU. Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
+
+\subsection{Accelerate}
+
+Accelerate models general GPU programming using a custom AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources). \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
+
 
 \section{Previous Work}
 
-\end{multicols}
+\red{Obviously going to mention R/T's stuff on implementation, but how much should we talk about scheduling theory? How relevant is it?}
+
+
+\section{Requirements}
+
+\red{Uncomfortably similar to `goals' in the introduction.}
+
+
+\section{Schedule}
+
+As this is partially a development thesis, we must form a development plan. \red{(Need to clarify what parts are research and what parts are development)}
+
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{99}
+\end{thebibliography}
+
+\end{multicols*}
 
 \end{document}
