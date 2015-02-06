@@ -26,27 +26,40 @@
 
 \section{Introduction}
 
-There are two notable trends in computer hardware. First, CPUs are gaining cores per chip while having reduced gains in clock speed. Second, GPUs are developing into generic computing units. As more computing problems are found to be solvable through parallelism, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
+There are two notable trends in computer hardware. 
+First, CPUs are gaining cores per chip while having reduced gains in clock speed.
+Second, GPUs are developing into generic computing units. 
+As more computing problems are found to be solvable through parallelism, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
 
 \red{Something comparing the issues of low-level, imperative CUDA/OpenCL code with higher-level DSLs, something else comparing DSLs with specialised GPU/vector languages such as Halide and NOVA.}
 
 
 \subsection{Goals}
 
-By the end of this thesis, Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan)} into `jobs' that can be scheduled \red{(dynamically? statically? leave that for later?)} onto a heterogeneous set of workers (CPUs, GPUs) \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')}.
+By the end of this thesis, Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan)} into `jobs' that can be scheduled \red{(dynamically? statically? leave that for later?)} onto a heterogeneous set of workers (CPUs, GPUs).
+\red{(Need to clarify what I'm adding that isn't just `making the scheduler better')}
 
 
 \section{Background}
 
-A large body of work has been produced on generation of parallel code for the GPU and for the CPU, however less has been done on the problem of doing both for a single general-purpose program. Previous work has investigated dynamic scheduling of a task composed of kernesl, however the kernels had to have both CPU and GPU versions provided by the user of the library. \red{(cite)} Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
+A large body of work has been produced on generation of parallel code for the GPU and for the CPU, however less has been done on the problem of doing both for a single general-purpose program. 
+Previous work has investigated dynamic scheduling of a task composed of kernesl, however the kernels had to have both CPU and GPU versions provided by the user of the library. \red{(cite)} 
+Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
 
-Accelerate is an EDSL embedded in Haskell, designed for general purpose GPU programming. However, some parts of computation are better suited for the less concurrent, higher speed processing of the CPU than the highly concurrent processing of a GPU. Examples: generic fold and scan are highly sequential, whereas their monoid versions are not. Map and stencil are iconically `embarrasingly parallel', and so should preferably go on the GPU. \red{(What are the other array DSL constructs? Are there any stateful iterators/transducers? Should they be mentioned here?)}
+Accelerate is an EDSL embedded in Haskell, designed for general purpose GPU programming. 
+However, some parts of computation are better suited for the less concurrent, higher speed processing of the CPU than the highly concurrent processing of a GPU. 
+Examples: generic fold and scan are highly sequential, whereas their monoid versions are not. 
+Map and stencil are iconically `embarrasingly parallel', and so should preferably go on the GPU. 
+\red{(What are the other array DSL constructs? Are there any stateful iterators/transducers? Should they be mentioned here?)}
 
-In addition to scheduling tasks based off of computational structure, even purely parallel problems can benefit from also being split onto the CPU. \red{(cite Ryan/Trevor, words about how CPUs can significantly assist a GPU. Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
+In addition to scheduling tasks based off of computational structure, even purely parallel problems can benefit from also being split onto the CPU. \red{(cite Ryan/Trevor, words about how CPUs can significantly assist a GPU. 
+Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
 
 \subsection{Accelerate}
 
-Accelerate models general GPU programming using a custom AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources). \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
+Accelerate models general GPU programming using a custom AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. 
+The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources).
+\red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
 
 
 \section{Previous Work}
@@ -61,7 +74,8 @@ Accelerate models general GPU programming using a custom AST, which is then proc
 
 \section{Schedule}
 
-As this is partially a development thesis, we must form a development plan. \red{(Need to clarify what parts are research and what parts are development) (What goes into a development plan? A week-by-week schedule that would be mostly `learn how Accelerate works', followed by `mess around with Accelerate'?)}
+As this is partially a development thesis, we must form a development plan. 
+\red{(Need to clarify what parts are research and what parts are development) (What goes into a development plan? A week-by-week schedule that would be mostly `learn how Accelerate works', followed by `mess around with Accelerate'?)}
 
 
 \bibliographystyle{plainnat}
