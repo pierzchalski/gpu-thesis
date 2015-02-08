@@ -49,16 +49,15 @@ This abstraction between what we want to happen, and how we want it to be done, 
 
 When the combinators are expressed, or embedded, as structures inside of an existing language, this style is commonly called an Embedded Domain Specific Language (EDSL). Accelerate is a EDSL embedded in Haskell, a high-level general purpose functional programming language. We will discuss the fine details of the Accelerate framework in a later section.
 
-\subsection{Why Scheduling over Things is Painful}
+\subsection{Why Scheduling Things is Painful}
 
 There are several obstacles to effectively partitioning, let alone scheduling, a workload over different work processors. The major issues both revolve around memory, namely access patterns and copy speed. 
 
-\textbf{Speed:} Inside of a single GPU, data transfer rates can reach upwards of 100 GB/s, and similarly on a single CPU die up to 20GB/s. However, all of these devices are typically connected over a PCIe bus, which caps out at around 8GB/s. This places strong constraints on how frequently data can be shuttled between components. In the current Accelerate architecture, producer/consumer fusion reduces the number of intermediate structures required to perform work, which helps mitigate this issue. However, this fusion can impede attempts to partition work.
+\textbf{Speed:} Inside of a single GPU, data transfer rates can reach upwards of 100GB/s, and similarly on a single CPU die up to 20GB/s. However, all of these devices are typically connected over a PCIe bus, which caps out at around 8GB/s. This places strong constraints on how frequently data can be shuttled between components. In the current Accelerate architecture, producer/consumer fusion reduces the number of intermediate structures required to perform work, which helps mitigate this issue. However, this fusion can impede attempts to partition work.
 
 \textbf{Access:} Parallelizable computations may have varying degrees of contiguity in their memory accesses. While some array languages allow for arbitrary accesses, combinator-based DSLs like Accelerate restrict computations to those that can be described using When computing a simple \texttt{map} operation, adjacent output locations depend on adjacent input locations, and so we can partition the work by index almost arbitrarily. Similarly, a tree-traversal monoidal fold can, at any given depth, be split over processors. However, any output index of a backpermute can be affected by the value at any index of the input. Although we can parallelise the work, we cannot partition the memory access. \red{(Expand on examples?)}
 
 Correctly partitioning and allocating work in the light of these issues will be a key component of this thesis.
-
 
 \section{Background}
 
@@ -70,7 +69,11 @@ In addition to scheduling tasks based off of computational structure, even purel
 
 \subsection{Accelerate}
 
-Accelerate models general GPU programming using a deeply-embedded AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources). \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
+Accelerate models general GPU programming using a deeply-embedded AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources).
+
+\red{Mention something about figuring out when to do the job fissioning: pre or post fusion? Maybe both? Are we simply fissioning tasks by index and then allocating them accross tasks? Do we do any specialisation based on the processor target (CPU as opposed to GPU)?}
+
+\red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
 
 \subsection{Scheduling}
 
@@ -81,11 +84,9 @@ Since the AST encodes the semantics of the GPU computation, we can derive the de
 
 \red{Obviously going to mention R/T's stuff on implementation, but how much should we talk about scheduling theory? How relevant is it?}
 
-
 \section{Requirements}
 
 Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan - but not automatically?)} into `jobs' that can be scheduled \red{(dynamically? statically? leave that for later?)} onto a heterogeneous set of workers (CPUs, GPUs) \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')} with a demonstrable performance boost.
-
 
 \section{Work Schedule}
 
