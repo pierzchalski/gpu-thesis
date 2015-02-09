@@ -96,9 +96,10 @@ The solution is to introduce a way to `lift' lists into our DSL, which we can do
 We can then give \icf{map'} the type \icf{(a\ ->\ b)\ ->\ DSL\ a\ ->\ DSL\ b}.
 
 In order to do anything with these data structures, we need to interpret or evaluate them. 
-For instance, we can define a recursive function \icf{eval\ :\ DSL\ a\ ->\ List\ a}:
+For instance, we can define a recursive evaluation function \icf{eval}:
 
 \begin{verbatim}
+  eval : DSL a -> List a
   eval dsl = dsl match
     lift list         -> list
     map' f anotherDsl -> map f (eval anotherDsl)
