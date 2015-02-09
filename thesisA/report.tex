@@ -5,8 +5,12 @@
 \usepackage[]{setspace}
 \usepackage[numbers]{natbib}
 \usepackage[usenames]{color}
+\usepackage[]{courier}
+\usepackage[]{listings}
 
 \newcommand{\red}[1]{\textcolor{red}{#1}}
+%inline code fragment
+\newcommand{\icf}[1]{\mbox{\texttt{#1}}}
 
 \onehalfspace
 \setlength{\columnsep}{1cm}
@@ -14,7 +18,7 @@
 
 \title{Work Scheduling on Heterogeneous Resources}
 \date{\today}
-\author{Gabi Keller\\\small{Supervisor} \and Edward 
+\author{Gabriele Keller\\\small{Supervisor} \and Edward 
 Pierzchalski}
 
 \begin{document}
@@ -27,54 +31,122 @@ Pierzchalski}
 
 \end{titlepage}
 
-\begin{multicols}{2}
-
 \section{Introduction}
 
-There are two notable trends in computer hardware. First, CPUs are gaining cores per chip while having reduced gains in clock speed. Second, GPUs are developing into generic computing units. As more computing problems are found to be solvable through parallelism, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
+There are two notable trends in computer hardware. 
+First, CPUs are gaining cores per chip while having reduced gains in clock speed. Second, GPUs are developing into generic computing units. 
+As more computing problems are found to be parallelizable, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
 
-Phrase the problem as follows: you have some source code in some language, describing a computation you want performed. It would be nice if, given this source specification, we could partition and schedule the work on to any processing unit available. We will see that not all source descriptions are created equal for this task.
+\subsection{Why Scheduling is Painful}
 
-\subsection{Low-Level Frameworks}
+There are several obstacles to effectively partitioning, let alone scheduling, a workload over different work processors. The major issues both revolve around memory, namely copy speed and access patterns. 
 
-The most popular frameworks for GPU programming are CUDA and OpenCL, which are both low-level imperative languages. In theory, the problem of partitioning work over the CPU and GPU can be solved at the level of these languages. In practice, these languages make composing solutions impractical - for instance, while CUDA and OpenCL can target CPU architectures, the resulting binaries are substantially less performant than code originally written with a CPU architecture in mind. 
+\paragraph*{Speed:} Inside of a single GPU, data transfer rates can reach upwards of 100 GB/s, and similarly on a single CPU die up to 20GB/s. However, all of these devices are typically connected over a PCIe bus, which caps out at around 8GB/s. This places strong constraints on how frequently data can be shuttled between components. In the current Accelerate architecture, producer/consumer fusion reduces the number of intermediate structures required to perform work, which helps mitigate this issue. However, this fusion can impede attempts to partition work.
 
-The full semantics of the CUDA and OpenCL languages allow for arbitrary write-effects from any kernel to any array, and include operations such as global barriers. This makes reasoning about kernels difficult for the same reason that hidden state impedes reasoning in many imperative languages. The effect is compounded when kernels are expected to run on separate devices; the result is that these low-level languages make for a poor source description.
+\paragraph*{Access:} Parallelizable computations may have varying degrees of contiguity in their memory accesses. When computing a simple \texttt{map} operation, adjacent output locations depend on adjacent input locations, and so we can partition the work by index almost arbitrarily. Similarly, a tree-traversal monoidal fold can, at any given depth, be split over processors. However, any output index of a backpermute can be affected by the value at any index of the input. Although we can parallelise the work, we cannot partition the memory access. \red{(Expand on examples?)}
 
-\subsection{Fancy DSLs}
-
-The frameworks described previously are distinguished by being \textit{imperative:} they describe, step by step, the actions performed by the GPU. Alternatively, we can describe our program using \textit{combinators}, which abstract the combination of computations. For example, \texttt{map} is a combinator that takes a function \texttt{f : a -> b}, and some \texttt{list : List a} and represents a new list, \texttt{map f list : List b}, which contains the result of applying \texttt{f} to every element in \texttt{list}. We don't particularly care \textit{how} \texttt{map} performs this: we just care that the result is what we expect.
-
-This abstraction between what we want to happen, and how we want it to be done, makes combinators quite useful as a source language for computations to be performed, assuming the combinators have `sufficiently sane' semantics. \red{(yeah this needs a better definition)} Once the user describes their program, we can interpret the description into whatever implementation we need to in order to satisfy the semantics of the given program.
-
-When the combinators are expressed, or embedded, as structures inside of an existing language, this style is commonly called an Embedded Domain Specific Language (EDSL). Accelerate is a EDSL embedded in Haskell, a high-level general purpose functional programming language. We will discuss the fine details of the Accelerate framework in a later section.
-
-\subsection{Why Scheduling over Things is Painful}
-
-There are several obstacles to effectively partitioning, let alone scheduling, a workload over different work processors. The major issues both revolve around memory, namely access patterns and copy speed. 
-
-\textbf{Speed:} Inside of a single GPU, data transfer rates can reach upwards of 100 GB/s, and similarly on a single CPU die up to 20GB/s. However, all of these devices are typically connected over a PCIe bus, which caps out at around 8GB/s. This places strong constraints on how frequently data can be shuttled between components. In the current Accelerate architecture, producer/consumer fusion reduces the number of intermediate structures required to perform work, which helps mitigate this issue. However, this fusion can impede attempts to partition work.
-
-\textbf{Access:} Parallelizable computations may have varying degrees of contiguity in their memory accesses. While some array languages allow for arbitrary accesses, combinator-based DSLs like Accelerate restrict computations to those that can be described using When computing a simple \texttt{map} operation, adjacent output locations depend on adjacent input locations, and so we can partition the work by index almost arbitrarily. Similarly, a tree-traversal monoidal fold can, at any given depth, be split over processors. However, any output index of a backpermute can be affected by the value at any index of the input. Although we can parallelise the work, we cannot partition the memory access. \red{(Expand on examples?)}
-
+\paragraph*{}
 Correctly partitioning and allocating work in the light of these issues will be a key component of this thesis.
 
+\subsection{Describing the Problem}
+
+Phrase the problem as follows: you have some source code in some language, describing a computation you want performed. 
+It would be nice if, given this source specification, we could partition and schedule the work on to any processing unit available. 
+We will see that not all source descriptions are up to this task.
+
+The most popular frameworks for GPU programming are CUDA and OpenCL, which are both low-level imperative languages. 
+In theory, the problem of partitioning work over the CPU and GPU can be solved at the level of these languages. 
+In practice, even for GPU-focused tasks such as a monoidal scan or fold, efficient implementations tend to require intimate knowledge of the memory and process architecture of the GPU. 
+This is an added cognitive strain on users of these frameworks, and makes composing GPU tasks difficult: a map followed by a scan is substantially different to just a map, or just a scan.
+
+These languages are also impractical for use as a single source over multiple processors - for instance, while CUDA and OpenCL can target CPU architectures, the resulting binaries are substantially less performant than code originally written with a CPU architecture in mind.
+
+The full semantics of the CUDA and OpenCL languages allow for arbitrary write-effects from any kernel to any array, and include operations such as global barriers. 
+This makes reasoning about kernels difficult for the same reason that hidden state impedes compositional reasoning in many imperative languages. 
+The effect is compounded when kernels are expected to run on separate devices; the result is that these low-level languages make for a poor source description.
+
+\subsection{Combinators}
+
+The frameworks described previously are distinguished by being \textit{imperative:} they describe, step by step, the actions performed by the GPU.
+Alternatively, we can describe our program using \textit{combinators}, which abstract the combination of computations. 
+For example, \icf{map} is a combinator that takes a function \icf{f\ :\  a\ ->\ b}, along with some list \icf{as\ :\ List\ a}, and produces a new list, \icf{map\ f\ as\ :\ List\ b}, which contains the result of applying \icf{f} to every element in \icf{as}. 
+We don't particularly care how \icf{map} performs this: we just care that the result is what we expect.
+
+This separation between \textit{what} we want to happen, and \textit{how} we want it to be done, makes combinators quite useful as a source language for computations to be performed, assuming the combinators have `sufficiently sane' semantics. 
+\red{(yeah this needs a better definition)} 
+Once the user describes their program, we can interpret the description into whatever implementation we need to in order to satisfy the semantics of the given program.
+
+\subsection{Describing Semantics}
+
+The design of a language framework for a specialised purpose (for instance, automatically parallelised vector programming) results in a Domain Specific Language, or DSL. 
+Many DSLs are implemented \textit{inside} another host language, commonly called `embedding'. There are essentially two flavours of Embedded DSLs (EDSLs):
+
+\paragraph*{Shallow Embedding:} 
+This is almost synonymous with constructing a library. 
+Terms in the DSL correspond to library functions that, when evaluated, directly perform whatever computations that they represent.
+
+\paragraph*{Deep Embedding:} 
+Alternatively, we can use the host languages' data definitions to construct a direct representation of the combinators. 
+Say we define a new version of \icf{map}, call it \icf{map'}, which will not be a \textit{function} that turns lists and functions into other lists.
+Instead, define it as a data constructor: an object containing a function and a list, i.e \texttt{map'\ :\ (a\ ->\ b)\ ->\ List\ a\ ->\ DSL\ b}, where \icf{DSL} is a type representing our DSL embedding. The representation data type is typically called the Abstract Syntax Tree, or AST.
+
+This representation has issues: we can't nest it, for instance, since \icf{map'} takes a \icf{List} yet produces a \icf{DSL}. 
+However, if we change \icf{map'} to take a \icf{DSL}, we will have completely removed lists from our list-description language! 
+The solution is to introduce a way to `lift' lists into our DSL, which we can do by  including a data constructor \texttt{lift\ :\ List\ a\ ->\ DSL\ a}. 
+We can then give \icf{map'} the type \icf{(a\ ->\ b)\ ->\ DSL\ a\ ->\ DSL\ b}.
+
+In order to do anything with these data structures, we need to interpret or evaluate them. 
+For instance, we can define a recursive function \icf{eval\ :\ DSL\ a\ ->\ List\ a}:
+
+\begin{verbatim}
+  eval dsl = dsl match
+    lift list         -> list
+    map' f anotherDsl -> map f (eval anotherDsl)
+\end{verbatim}
+
+\paragraph*{Benefits of Deep Embeddings:}
+This may seem like unnecessarily complicated overhead, however it gives us the flexibility to do other things with our description of list computations. 
+One of the most important is that once a user has constructed a term in the DSL, we can manipulate it in the host language. 
+For array DSLs, most of these manipulations are for optimisation.
+
+As an example, consider the evaluation of \icf{map\ f\ (map\ g\ as)}. 
+Semantically, the final result is the application of the composition of \icf{f} and \icf{g} on the elements of \icf{as}. 
+However, since \icf{map} is a simple function, the two calls to \icf{map} will produce two intermediate lists. 
+On a CPU, this is a relatively small (but not ignorable!) overhead; yet if we were to naively send off the work to the GPU as two separate mapping steps (presumably over arrays instead of lists), we would suddenly run into memory bottlenecks.
+
+Compare this with the equivalent deep emedding, \icf{map'\ f\ (map'\ g\ (lift\ as))}. 
+Since this is just a nested data structure, we can `pull out' the functions and compose them, producing a new data structure \icf{map'\ (f\ .\ g)\ (lift\ as)}.
+When we finally interpret this new value, it will be converted into a call to \icf{map} that only makes a single list, avoiding memory bottlenecks.
+
+Accelerate is an EDSL embedded in Haskell, a high-level general purpose functional programming language. 
+We will discuss the fine details of the Accelerate framework in a later section.
 
 \section{Background}
 
-A large body of work has been produced on generation of parallel code for the GPU and for the CPU \citep{lee_transparent_2013}, however less has been done on the problem of doing both for a single general-purpose program. Previous work has investigated dynamic scheduling of a task composed of kernels, however the kernels had to have both CPU and GPU versions provided by the user of the library. \red{(cite)} Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
-
-Accelerate is an EDSL, deeply embedded in Haskell, designed for general purpose GPU programming. However, some parts of computation are better suited for the less concurrent, higher speed processing of the CPU than the highly concurrent processing of a GPU. Examples: generic fold and scan are highly sequential, whereas their monoid versions are not. Map and stencil are iconically `embarrasingly parallel', and so should preferably go on the GPU. \red{(What are the other array DSL constructs? Are there any stateful iterators/transducers? Should they be mentioned here?)}
-
-In addition to scheduling tasks based off of computational structure, even purely parallel problems can benefit from also being split onto the CPU. \red{(cite Ryan/Trevor, words about how CPUs can significantly assist a GPU. Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
+A large body of work has been produced on generation of parallel code for the GPU and for the CPU \citep{lee_transparent_2013}, however less has been done on the problem of doing both for a single general-purpose program. 
+Previous work has investigated dynamic scheduling of a task composed of kernels, however the kernels had to have both CPU and GPU versions provided by the user of the library. 
+\red{(cite)} 
+Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
 
 \subsection{Accelerate}
 
-Accelerate models general GPU programming using a deeply-embedded AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources). \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
+Accelerate models general GPU programming using a deeply-embedded AST, which is then processed through several optimisation and fusion stages, before being exported to an Accelerate backend. 
+The backend then performs any hardware-specific processing, including compilation (for instance, the CUDA backend embeds the program using skeleton kernel sources).
+
+\red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
+
 
 \subsection{Scheduling}
 
-Since the AST encodes the semantics of the GPU computation, we can derive the dependency graph of any given part of the program. Given this dependency graph, the problem of scheduling the work onto parallel resources is NP-hard (by reduction to TSP), and so efforts into scheduling tend to focus on heuristics.
+Since the AST encodes the semantics of the GPU computation, we can derive the dependency graph of any given part of the program. 
+Given this dependency graph, the problem of scheduling the work onto parallel resources is NP-hard (by reduction to TSP), and so efforts into scheduling tend to focus on heuristics.
+
+\subsubsection*{A Cheap Trick...}
+\red{Tiny arrays can go on the CPU!}
+
+\subsubsection*{And an Expensive One}
+Even purely parallel problems can benefit from also being split onto the CPU.
+\red{(cite Ryan/Trevor, words about how CPUs can significantly assist a GPU. Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
 
 
 \section{Previous Work}
@@ -84,14 +156,54 @@ Since the AST encodes the semantics of the GPU computation, we can derive the de
 
 \section{Requirements}
 
-Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan - but not automatically?)} into `jobs' that can be scheduled \red{(dynamically? statically? leave that for later?)} onto a heterogeneous set of workers (CPUs, GPUs) \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')} with a demonstrable performance boost.
+Accelerate should be able to fission a program written in its DSL \red{(already done by Trevor and Ryan - but not automatically?)} into `jobs' that can be scheduled onto a heterogeneous set of workers (CPUs, GPUs) \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')} with a demonstrable performance boost.
 
 
 \section{Work Schedule}
 
-As this is partially a development thesis, we must form a development plan. \red{(Need to clarify what parts are research and what parts are development. Also need to clarify what granularity is required other than `mess with Accelerate to learn about it, then mess with Accelerate to add something to it'.)}
+As this is partially a development thesis, we must form a development plan.
+The below schedule details the hopes and expectations for when parts of the development phase will be completed.
+Included are milestones to be used as checks on whether these expectations have been met.
+The final report is expected to be written in tandem with the development stages: each week and each milestone has an implicit requirement, `have something written down about this'.
+\red{(Need to clarify what parts are research and what parts are development. Also need to clarify what granularity is required other than `mess with Accelerate to learn about it, then mess with Accelerate to add something to it'.)}
 
-\end{multicols}
+\begin{description}
+  \item[Week 1 - 4:] 
+    Familiarise myself with Accelerate.
+    \begin{description}
+      \item[Week 1:] 
+        User-facing DSL. 
+        \\Milestone: a simple Accelerate program, say a Newtonian gravity simulation.s
+      \item[Week 2 - 3:] 
+        Compilation phases. 
+        \\Milestone: \red{implement a simple phase?}
+      \item[Week 3 - 4:] 
+        Accelerate backends (mainly LLVM)
+    \end{description}
+  \item[Week 5 - 9:] 
+    Write scheduler.
+    \begin{description}
+      \item[Week 5 - 6:] 
+        Have fissioning working on the AST. 
+        \\Milestone: produce index-partitioned ASTs at kernel generation step.
+        \\Milestone: produce ASTs with optimisations for small array sizes.
+      \item[Week 6 - 7:]
+        Emit to both CPU and GPU-facing backends. 
+        \\Milestone: have above kernels produced and split between CPU and GPU targets, at some static fraction.
+        \\Milestone: implement small-array CPU optimisation as part of scheduling.
+      \item[Week 7 - 9:]
+        Implement dynamic scheduling.
+        \\Milestone: a runtime utility to determine what backends and processors are available, along with their processing speeds and bus transfer limits (both between and within processors).
+        \\Milestone: have task fissioning and task allocation take into account memory dependencies and relative power of processors.
+    \end{description}
+  \item[Week 10 - 12:]
+    Benchmarks.
+    \\Milestone: Compare performance on common problems (Black Scholes, $n$-body) pre- and post-scheduler.
+    \\Milestone: Compare vs. previous scheduler implementation from \red{make formal: Ryan and Trevor}, hopefully seeing improvement.
+    \\Milestone: Show improvement due to separate stages of scheduler optimisation: small-array CPU scheduling vs. task partitioning.
+    \\Milestone: Show improvement due to dynamically informed allocation vs. static strategy.
+  \item[Week 13 - Due:] Buffer time for the inevitable. Clean-up for final report.
+\end{description}
 
 \pagebreak
 
