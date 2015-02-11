@@ -1,5 +1,9 @@
 \documentclass[a4paper,12pt]{article}
-\usepackage[a4paper,margin=2cm,bottom=2.5cm]{geometry}
+\usepackage[
+  a4paper,
+  margin=2cm,
+  bottom=2.5cm
+]{geometry}
 \usepackage[utf8]{inputenc}
 \usepackage[]{multicol}
 \usepackage[]{setspace}
@@ -9,17 +13,15 @@
 \usepackage[]{listings}
 \usepackage[]{hyperref}
 
+% Newcommands
 \newcommand{\red}[1]{\textcolor{red}{#1}}
-
-%inline code fragment
-\newcommand{\icf}[1]{\mbox{\texttt{#1}}}
-
+\newcommand{\icf}[1]{\mbox{\texttt{#1}}} %inline code fragment
 \newcommand{\milestone}[0]{\textbf{Milestone:} }
 
+% Formatting
 \onehalfspace
-\setlength{\columnsep}{1cm}
-\raggedcolumns
 
+% Title, Author
 \title{Work Scheduling on Heterogeneous Resources}
 \date{\today}
 \author{Gabriele Keller\\\small{Supervisor} \and Edward Pierzchalski}
@@ -36,8 +38,11 @@
 
 \section{Introduction}
 There are two notable trends in computer hardware. 
-First, CPUs are gaining cores per chip while having reduced gains in clock speed. Second, GPUs are developing into generic computing units. 
+First, CPUs are gaining cores per chip while having reduced gains in clock speed. 
+Second, GPUs are developing into generic computing units, with APIs that expose more of the power of their architecture.
 As more computing problems are found to be parallelizable, there is an incentive to try and move work that would have been done on the CPU to the GPU, particularly operations on vectors and streaming data.
+At the same time, research suggests that the gap between CPU and GPU processing rates is not as high as one expects. \citep{lee_debunking_2010, gregg_where_2011}
+This gives an incentive to design languages and frameworks to ease the division of work over both the CPU and GPU.
 
 \subsection{Why GPU Programming is Painful}
 The most popular frameworks for GPU programming are CUDA and OpenCL, which are both low-level imperative languages. 
@@ -56,8 +61,9 @@ There are several obstacles to effectively partitioning, let alone scheduling, a
 The major issues both revolve around memory, namely copy speed and access patterns. 
 
 \subsubsection*{Memory Transfer Speed} 
-Inside of a single GPU, data transfer rates can reach upwards of 100 GB/s, and similarly on a single CPU die up to 20GB/s. 
-However, all of these devices are typically connected over a PCIe bus, which caps out at around 8GB/s. 
+Inside of a single GPU, data transfer rates can reach upwards of 300 GB/s. \citep{gtx-780-spec}
+However, CPUs and GPUs are typically connected over a PCIe bus.
+Modern PCIe busses have a bandwidth cap of around 8GB/s. \citep{pcie-3-faq}
 This places strong constraints on how frequently data can be shuttled between components. 
 In the current Accelerate architecture, producer/consumer fusion reduces the number of intermediate structures required to perform work, which helps mitigate this issue. 
 However, this fusion can impede attempts to partition work.
@@ -71,7 +77,7 @@ Although we can parallelise the work, we cannot partition the memory access. \re
 
 \subsection{Making Things Better}
 
-A large body of work has been produced on generation of parallel code for the GPU and for the CPU \citep{lee_transparent_2013}, however less has been done on the problem of doing so automatically for a general-purpose program. 
+A large body of work has been produced on generation of parallel code for the GPU and for the CPU, \citep{lee_transparent_2013} however less has been done on the problem of doing so automatically for a general-purpose program. 
 Previous work has investigated dynamic scheduling of a task composed of kernels, however the kernels had to have both CPU and GPU versions provided by the user of the library. 
 \red{(cite)} 
 Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
@@ -106,7 +112,7 @@ Instead of a function, define it as a data constructor: an object containing a f
 The representation data type is typically called the Abstract Syntax Tree, or AST.
 
 This representation has issues: we can't nest it, for instance, since \icf{map'} takes a \icf{List} yet produces a \icf{DSL}. 
-However, if we change \icf{map'} to take a \icf{DSL}, we will have completely removed lists from our list-description language! 
+However, if we change \icf{map'} to take a \icf{DSL}, we will have completely removed lists from our list operation description language! 
 The solution is to introduce a way to `lift' lists into our DSL, which we can do by  including a data constructor \texttt{lift\ :\ List\ a\ ->\ DSL\ a}. 
 We can then give \icf{map'} the type \icf{(a\ ->\ b)\ ->\ DSL\ a\ ->\ DSL\ b}.
 
@@ -146,6 +152,18 @@ The compilation step is intentionally kept separate from the AST transformations
 \red{(does this add overhead? could we do cool things if we screwed with the tree earlier, or provided different KernIR primitives specialised for the CPU?)}
 
 Recently, a new backend kit has been published for Accelerate, cleanly separating these compiler stages and exposing a simplified kernel-level representation compared to previous versions of Accelerate.
+These changes introduced a new pair of combinators to the language, \icf{split} and \icf{concat}.
+They have the intuitive semantics that their names imply, of splitting and concatenating arrays.
+
+The combinators are \red{carried through to the KernelIR stage? only in SimpleAcc?} used by the compilation phases to `fragment' arrays and operations on them.
+For instance, \icf{map\ f\ arr} may be translated\footnote{This is pseudocode: the details of the Accelerate DSL are omitted for brevity. Example drawn from \citet{newton_converting_2014}.} into
+
+\begin{verbatim}
+  let (x, y) = split arr in
+    concat (map f x) (map f y)
+\end{verbatim}
+
+When later stages in the compiler encounter the \icf{concat} node, they may schedule the two arguments to \icf{concat} to run on different processors before combining them.
 
 \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
 
@@ -160,17 +178,38 @@ This complicates the partitioning of the work: although we can split the task of
 In many GPU use-cases, the strongest constraint on throughput is memory transfer speed, which makes copying the entire input array to each processor infeasible.
 The result is that these permutations are \textit{de facto} synchronisation points: every operation before them must all have their results returned and combined before the permutation.
 This has a potentially interesting interaction with data fission: normally, a map composed with a backpermute would be fused together in some fashion.
-We may ask the question: when is it worth fissioning data for the map before recombining for the permutation, and when is the fused operation preffered?
+We may ask the question: when is it worth fissioning data for the map before recombining for the permutation, and when is the fused operation preferred?
 
 \section{Previous Work}
 
-\subsection{Scheduling}
+This project is not solely focused on heterogeneous work scheduling: it is specifically focused on scheduling in the context of a high-level DSL for specifying array computations.
+Consequently, previous publications on both of these areas are relevant.
+
+\subsection{Heterogeneous Scheduling}
+
 
 \subsection{Accelerate}
 
 \subsection{Heterogeneous Scheduling in Accelerate}
-A recent paper by \citet*{newton_converting_2014} describes a first foray into heterogeneous scheduling in Accelerate.
-Their paper forms the foundation of this project.
+A recent (at the time of writing, unpublished) paper by \citet*{newton_converting_2014} describes a first foray into heterogeneous scheduling in Accelerate.
+This is also the work that led to the previously described improvements to Accelerate - the separation of AST transformation phases, the improved final kernel representation, and the separation and abstraction of the hardware backends. 
+In addition to these contributions, in their paper  \citeauthor{newton_converting_2014} introduce data fissioning as described previously, and explore two methods of scheduling tasks over the fissioned data.
+
+\paragraph*{Bulk-Synchronous Parallel} 
+Tasks were fissioned into some constant number of segments, which were in turn round-robin allocated onto processors.
+Scheduling was performed in batches, and tasks were fissioned in dependency order.
+This first method had no notion of device affinity, and so ran into memory bottlenecks since data would be frequently copied from processors to the host before the next batch was allocated.
+In addition, the batch allocation added significant synchronisation overhead between rounds.
+These deficiencies resulted in extreme performance degredation, and the authors do not persue the method further (which is a hint that we should not either).
+
+\paragraph*{Single Program, Multiple Data}
+As an alternative strategy, the authors use the dependency graph to ensure that at least some of the dependencies for a fragment are all allocated to the same device.
+Data fissioning occured in the same manner as with the bulk-synchronous method.
+The enforcement of the scheduling semantics of fissioning were split between both the fissioning stage of AST processing, and in the final device scheduler.
+Namely, the fissioning algorithm is what made decisions about work ratios and so expected, for example, the first fraction of the segments to go on one device and the rest to another.
+This was separately reflected in the scheduler as well.
+
+
 
 \section{What We're Going To Do}
 There is much potential work within the scope of what has been discussed so far.
@@ -178,12 +217,18 @@ For the purposes of this project, the high-level goal is to have Accelerate able
 \red{(Need to clarify what I'm adding that isn't just `making the scheduler better')}
 In addition, the following are potential points of focus to provide guidance in achieving the desired result.
 
-\subsubsection*{Dynamic Fissioning}
+\subsection{Dynamic Fissioning}
 The data fissioning described previously was always static: the SimpleAcc term would be fissioned into some finite and static number of array segments, and each work component would be sent off to the same processing unit (determined by index).
 
 We can improve on this by determining the degree of fissioning and the allocation of fissioned segments dynamically, depending on factors such as the relative processing speeds of the processors.
 
-\subsubsection*{Small Array Optimisations}
+\subsection{Avoiding Sharing}
+\red{Currently doesn't try and avoid copying data, just hoping that the thing works}
+
+\subsection{Promoting Sharing}
+\red{Currently can't have several devices working on a `different part of the program' at the same time. Need to clarify.}
+
+\subsection{Small Array Optimisations}
 One minor issue not addressed by existing approaches to heterogeneous resource scheduling is the cost of operations on small arrays.
 Loading, running, and using the result of a GPU kernel has significant overhead.
 Below a certain array size, the processing time of operations on an array is dominated by the high latencies of both loading the GPU kernel and data transfer between the CPU and GPU.
@@ -192,27 +237,48 @@ In these cases, it would be more effective to perform the operation on the CPU.
 The existing Accelerate framework does not differentiate workloads by array size, and so does not take advantage of this.
 Once we implement dynamic fissioning, we can look into including this optimisation.
 
-\subsubsection*{Extensions}
-\begin{itemize}
-  \item 
-    The current LLVM backend for Accelerate does not support some operations, such as stencils.
-    Expanding support for this feature will allow more comprehensive comparisons of fissioning transformations.
-  \item
-    Dynamic fissioning would be improved if we had a notion of `device affinity', so that data dependencies in the task graph are not unnecessarily copied between processors.
-  \item
-    For some tasks such as sorting and non-monoidal folds, CPUs may be as fast as GPUs.
-    For this reason, after fissioning we may prefer that a given segment of work be performed on a particular kind of processor.
-    Handling this form of `task affinity' may provide additional improvements to performance.
-    \red{(Find more examples. Is this relevant? Does Accelerate contain enough operations that are performant on CPUs?)}
-    \red{(Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
-\end{itemize}
+\subsection{Extensions}
+Below is a list of potentially valuable additions to the goals of this project.
+Since they are not critical to the goal, they will be persued only if time permits.
+
+\paragraph*{Improved Concatenation}
+Currently, \icf{concat} nodes are converted into array generators using conditional indexing on the segments.
+For instance if we have \icf{b\ =\ concat\ b1\ b2}, and if \icf{b1} and \icf{b2} are split at some index \icf{s}, this will be translated into
+
+\begin{verbatim}
+  b = generate (\i -> if (i < s) then (b1 ! i) else (b2 ! i))
+\end{verbatim}
+
+Although there are situations where the intervening \icf{generate} may be removed by inlining or through indexing with a constant value, performance may be improved otherwise by adding memory-copying primitives to the lower-level array representations.
+
+\paragraph*{LLVM Support}
+The current LLVM backend for Accelerate does not support some operations, such as stencils.
+Expanding support for this feature will allow more comprehensive comparisons of fissioning transformations.
+
+\paragraph*{Device Affinity}
+Dynamic fissioning would be improved if we had a notion of `device affinity', so that data dependencies in the task graph are not unnecessarily copied between processors.
+
+\paragraph*{Processor Affinity}
+For some tasks such as sorting and non-monoidal folds, CPUs may be as fast as GPUs.
+For this reason, after fissioning we may prefer that a given segment of work be performed on a particular kind of processor.
+Handling this form of `task affinity' may provide additional improvements to performance.
+    
+\red{(Find more examples. Is this relevant? Does Accelerate contain enough operations that are performant on CPUs?)}
+\red{(Note: find out why Ryan/Trevor didn't add the benchmark for the CPU+GPU performance on the Black Scholes stuff.)}
+
+\subsection{Initial Technical Plan}
+The existing framework relies on the scheduling backend reacting to \icf{split} and \icf{concat} nodes in the final representation, and splitting work accordingly.
+Currently, the process of introducing these fragmenting nodes occurs in a single phase, after high-level map fusion.
+Investigating the interaction of data fissioning with other operations and optimisations will involve separating out the fusion steps, so as to insert fissioning between them.
+Adding information about available processors will require providing some data to most of the compilation steps: we can achieve this with something like the reader monad, if needed.
+Adding affinities may involve adding metadata to the fissioning nodes themselves.
 
 \section{Work Schedule}
-\label{sec:Work_Schedule}
 As this is partially a development thesis, we must form a development plan.
 The below schedule details the hopes and expectations for when parts of the development phase will be completed.
 Included are milestones to be used as checks on whether these expectations have been met.
 The final report is expected to be written in tandem with the development stages: each week and each milestone has an implicit requirement, `have something written down about this'.
+
 \red{(Need to clarify what parts are research and what parts are development. Also need to clarify what granularity is required other than `mess with Accelerate to learn about it, then mess with Accelerate to add something to it'.)}
 
 \subsection{Timetable}
@@ -244,19 +310,19 @@ The final report is expected to be written in tandem with the development stages
       \item[Week 7 - 9:]
         Implement dynamic scheduling.
         \\\milestone a runtime utility to determine what backends and processors are available, along with their processing speeds and bus transfer limits (both between and within processors).
-        \\\milestone have task fissioning and task allocation take into account memory dependencies and relative power of processors.
+        \\\milestone (Extension) have task fissioning and task allocation take into account memory dependencies and relative processing speed of processors.
     \end{description}
   \item[Week 10 - 12:]
     Benchmarks.
     \\\milestone Compare performance on common problems (Black Scholes, $n$-body) with and without scheduler.
-    \\\milestone Compare vs. previous scheduler implementation from \red{make formal: Ryan and Trevor}, hopefully seeing improvement.
-    \\\milestone Show improvement due to separate stages of scheduler optimisation: small-array CPU scheduling vs. task partitioning.
-    \\\milestone Show improvement due to dynamically informed allocation vs. static strategy.
-  \item[Week 13 - Due:] Buffer time for the inevitable. Clean-up for final report. Extensions, if applicable.
+    \\\milestone Compare vs. previous scheduler implementation from \citet{newton_converting_2014}, hopefully seeing improvement.
+    \\\milestone Show improvement due to separate stages of scheduler optimisation: small-array CPU scheduling, task partitioning, preventing permute fusion.
+    \\\milestone (Extension) Show improvement due to dynamically informed allocation vs. static strategy.
+  \item[Week 13 - Due:] Buffer time for the inevitable. Clean-up for final report.
 \end{description}
 
 \subsection{Measures of Success}
-For those milestones directly related to construction of the scheduler, there are two `parameters' for success: depth and breadth.\footnote{This conceptual divison is not due to us: we rephrase it here from \red{Trevor's paper.}} 
+For those milestones directly related to construction of the scheduler, there are two `parameters' for success: depth and breadth.\footnote{This conceptual divison is not due to us: we rephrase it here, but it is originally from \citet{newton_converting_2014}.} 
 `Depth' in this context refers to successfully processing an AST through all the relevant compiler passes. 
 `Breadth' refers to having depth completion across Accelerates' many array operations (maps, folds, permutes, and recently iteration constructs).
 Cleary depth completion is a necessary prerequisite for most of the desired results concerning scheduling, however breadth is important for assessing the interaction between task fissioning and compilation optimisations like fusion.
@@ -265,7 +331,7 @@ Cleary depth completion is a necessary prerequisite for most of the desired resu
 
 \footnotesize
 
-\bibliographystyle{plainnat}
-\bibliography{./ref/bibliography}
+\bibliographystyle{unsrtnat}
+\bibliography{./ref/bibliography,./ref/websites}
 
 \end{document}
