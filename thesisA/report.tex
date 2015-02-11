@@ -45,12 +45,12 @@ At the same time, research suggests that the gap between CPU and GPU processing 
 This gives an incentive to design languages and frameworks to ease the division of work over both the CPU and GPU.
 
 \subsection{Why GPU Programming is Painful}
-The most popular frameworks for GPU programming are CUDA and OpenCL, which are both low-level imperative languages. 
+Two of the most popular frameworks for GPU programming are CUDA and OpenCL, which are both low-level imperative languages. 
 In theory, the problem of partitioning work over the CPU and GPU can be solved at the level of these languages. 
-In practice, even for GPU-focused tasks such as a monoidal scan or fold, efficient implementations tend to require intimate knowledge of the memory and process architecture of the GPU. 
+In practice, even for GPU-focused tasks such as a monoidal scan, sorts, or folds, efficient implementations tend to require intimate knowledge of the memory and process architecture of the GPU. \citet{harris_parallel_2007, satish_designing_2008}
 This is an added cognitive strain on users of these frameworks, and makes composing GPU tasks difficult: a map followed by a scan is substantially different to just a map, or just a scan.
 
-These languages are also impractical for use as a single source language over multiple types of processors - for instance, while CUDA and OpenCL can target CPU architectures, the resulting binaries are substantially less performant than code originally written with a CPU architecture in mind.
+These languages are also impractical for use as a single source language over multiple types of processors - for instance, while CUDA and OpenCL can target CPU architectures, the resulting binaries are substantially less performant than code originally written with a CPU architecture in mind. \footnote{See \citet{jie_shen_performance_2013} for a discussion focusing on OpenCL.}
 
 The full semantics of the CUDA and OpenCL languages allow for arbitrary write-effects from any kernel to any array, and include operations such as global barriers. 
 This makes reasoning about kernels difficult for the same reason that hidden state impedes compositional reasoning in many imperative languages. 
@@ -148,13 +148,18 @@ Accelerate is an EDSL targeting general-purpose GPU programming.
 It is embedded in Haskell, a high-level general purpose functional programming language.
 Accelerate models general GPU programming using a deeply-embedded AST, which is then transformed through a variety of intermediate representations and functions over them.
 These transformations perform a wide variety of changes aimed at converting the AST from the high-level, user-facing description into a low-level description appropriate for compilation to machine code for the relevant platform.
-The compilation step is intentionally kept separate from the AST transformations, to make changing compilation targets as straightforward as possible.
+
+All levels of the Accelerate framework make heavy use of advanced features of the Haskell compiler.
+Most prominently, GADTs and type families are used to encode many properties of the AST, such as the shape of arrays, and levels of parallelism (these advanced type annotations are left out of this report for brevity).
+Other features include the use of De Bruijn indices to capture lambda abstraction, and also to facilitate term reuse.
+However, despite how interesting all these properties are, they mostly form a backdrop to our main focus, the compilation phases.
+
+The final, machine-code-generating compilation step is intentionally kept separate from the AST transformations, to make changing compilation targets as straightforward as possible.
 \red{(does this add overhead? could we do cool things if we screwed with the tree earlier, or provided different KernIR primitives specialised for the CPU?)}
-
 Recently, a new backend kit has been published for Accelerate, cleanly separating these compiler stages and exposing a simplified kernel-level representation compared to previous versions of Accelerate.
-These changes introduced a new pair of combinators to the language, \icf{split} and \icf{concat}.
-They have the intuitive semantics that their names imply, of splitting and concatenating arrays.
 
+One of these changes introduced a new pair of combinators to the language, \icf{split} and \icf{concat}.
+They have the intuitive semantics that their names imply, of splitting and concatenating arrays.
 The combinators are \red{carried through to the KernelIR stage? only in SimpleAcc?} used by the compilation phases to `fragment' arrays and operations on them.
 For instance, \icf{map\ f\ arr} may be translated\footnote{This is pseudocode: the details of the Accelerate DSL are omitted for brevity. Example drawn from \citet{newton_converting_2014}.} into
 
@@ -182,13 +187,25 @@ We may ask the question: when is it worth fissioning data for the map before rec
 
 \section{Previous Work}
 
-This project is not solely focused on heterogeneous work scheduling: it is specifically focused on scheduling in the context of a high-level DSL for specifying array computations.
-Consequently, previous publications on both of these areas are relevant.
-
 \subsection{Heterogeneous Scheduling}
+Previous work on scheduling a parallelisable workload onto heterogeneous processors has explored solutions in low-level contexts, and has encountered a variety of obstacles.
+
+\subsubsection*{Binary Analysis}
+In work by \citet*{lee_transparent_2013}, the authors construct a framework that takes a users' data parallel OpenCL kernel and partitions the work across devices.
+This is achieved through hooking into the OpenCL API layer to expose a single, large device.
+
+Kernels are split at runtime using a decision tree heuristic, using approximations on the transfer costs of moving data between processors, and also the variance of performance of processors.
+These parameters are estimated by the partitioning system, however it is not mentioned what the method of estimation is.
+
+To determine whether a workload can be safely separated to several devices, data flow analysis is used on array indexing.
+If the data flow analysis does not sufficiently guarantee safe array access, the kernel is considered un-parallelisable.
+This is an example of where a higher-level abstraction may have assisted in splitting the workload.
+These are both potentially interesting directions for research on improving Accelerate, however they are beyond the current scope.
+
+\subsubsection*{Profiling}
 
 
-\subsection{Accelerate}
+\subsection{Array DSLs}
 
 \subsection{Heterogeneous Scheduling in Accelerate}
 A recent (at the time of writing, unpublished) paper by \citet*{newton_converting_2014} describes a first foray into heterogeneous scheduling in Accelerate.
@@ -198,6 +215,7 @@ In addition to these contributions, in their paper  \citeauthor{newton_convertin
 \paragraph*{Bulk-Synchronous Parallel} 
 Tasks were fissioned into some constant number of segments, which were in turn round-robin allocated onto processors.
 Scheduling was performed in batches, and tasks were fissioned in dependency order.
+
 This first method had no notion of device affinity, and so ran into memory bottlenecks since data would be frequently copied from processors to the host before the next batch was allocated.
 In addition, the batch allocation added significant synchronisation overhead between rounds.
 These deficiencies resulted in extreme performance degredation, and the authors do not persue the method further (which is a hint that we should not either).
@@ -205,11 +223,10 @@ These deficiencies resulted in extreme performance degredation, and the authors 
 \paragraph*{Single Program, Multiple Data}
 As an alternative strategy, the authors use the dependency graph to ensure that at least some of the dependencies for a fragment are all allocated to the same device.
 Data fissioning occured in the same manner as with the bulk-synchronous method.
+
 The enforcement of the scheduling semantics of fissioning were split between both the fissioning stage of AST processing, and in the final device scheduler.
 Namely, the fissioning algorithm is what made decisions about work ratios and so expected, for example, the first fraction of the segments to go on one device and the rest to another.
-This was separately reflected in the scheduler as well.
-
-
+This was separately reflected in the scheduler as well. This latter method forms the foundation of this project.
 
 \section{What We're Going To Do}
 There is much potential work within the scope of what has been discussed so far.
