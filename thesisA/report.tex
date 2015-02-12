@@ -13,7 +13,7 @@
 \usepackage[]{listings}
 \usepackage[]{hyperref}
 
-% Newcommands
+% New commands
 \newcommand{\red}[1]{\textcolor{red}{#1}}
 \newcommand{\icf}[1]{\mbox{\texttt{#1}}} %inline code fragment
 \newcommand{\milestone}[0]{\textbf{Milestone:} }
@@ -78,8 +78,7 @@ Although we can parallelise the work, we cannot partition the memory access. \re
 \subsection{Making Things Better}
 
 A large body of work has been produced on generation of parallel code for the GPU and for the CPU, \citep{lee_transparent_2013} however less has been done on the problem of doing so automatically for a general-purpose program. 
-Previous work has investigated dynamic scheduling of a task composed of kernels, however the kernels had to have both CPU and GPU versions provided by the user of the library. 
-\red{(cite)} 
+Previous work has investigated dynamic scheduling of a task composed of kernels, however the kernels had to have both CPU and GPU versions provided by the user of the library.  \citep{wang_cpu+gpu_2014}
 Ideally, we should be able to separate the declaration of our problem from the generation of parallel code to run on whatever hardware happens to be available.
 Correctly partitioning and allocating work in the light of the above issues will be a key component of this thesis.
 
@@ -136,7 +135,8 @@ For array DSLs, many of these manipulations are for optimisation.
 As an example, consider the evaluation of \icf{map\ f\ (map\ g\ as)}. 
 Semantically, the final result is the application of the composition of \icf{f} and \icf{g} on the elements of \icf{as}. 
 However, since \icf{map} is a simple function, the two calls to \icf{map} will produce two intermediate lists. 
-On a CPU, this is a relatively small (but not ignorable!) overhead; yet if we were to naively send off the work to the GPU as two separate mapping steps (presumably over arrays instead of lists), we would suddenly run into memory bottlenecks transferring the data over the PCIe bus.
+On a CPU, this is a relatively small (but not ignorable!) overhead. \citep{rompf_optimizing_2013}
+Yet, if we were to naively send off the work to the GPU as two separate mapping steps (presumably over arrays instead of lists), we would suddenly run into memory bottlenecks transferring the data over the PCIe bus.
 
 Compare this with the equivalent deep emedding, \icf{map'\ f\ (map'\ g\ (lift\ as))}. 
 Since this is just a nested data structure, we can `pull out' the functions and compose them, producing a new data structure \icf{map'\ (f\ .\ g)\ (lift\ as)}.
@@ -158,6 +158,7 @@ The final, machine-code-generating compilation step is intentionally kept separa
 \red{(does this add overhead? could we do cool things if we screwed with the tree earlier, or provided different KernIR primitives specialised for the CPU?)}
 Recently, a new backend kit has been published for Accelerate, cleanly separating these compiler stages and exposing a simplified kernel-level representation compared to previous versions of Accelerate.
 
+\subsection{Fission}
 One of these changes introduced a new pair of combinators to the language, \icf{split} and \icf{concat}.
 They have the intuitive semantics that their names imply, of splitting and concatenating arrays.
 The combinators are \red{carried through to the KernelIR stage? only in SimpleAcc?} used by the compilation phases to `fragment' arrays and operations on them.
@@ -169,13 +170,16 @@ For instance, \icf{map\ f\ arr} may be translated\footnote{This is pseudocode: t
 \end{verbatim}
 
 When later stages in the compiler encounter the \icf{concat} node, they may schedule the two arguments to \icf{concat} to run on different processors before combining them.
+In the context of work division over processors, this process of splitting arrays is called `data fission'. \citep{newton_converting_2014}
 
 \red{Take up two pages describing the internals of Accelerate. Note: get a hand on R/T's code so we can see exactly how they go from fissioning the SimpleAcc AST to actually running code on separate processing units.}
 
 \subsubsection*{Aside: A Frustrating Operation}
 There is one family of array operations in the Accelerate DSL that is particularly non-performant for heterogeneous scheduling.
 The \icf{permute} and \icf{backpermute} operations use a function from one set of array indices to another in order to permute an array.
-For instance, \icf{backpermute\ f\ old} will produce an array \icf{res} such that \icf{res\ !\ i =\ old !\ (f\ i)}.
+As an example, consider the operation \icf{new\ =\ backpermute\ f\ old}.
+The function \icf{f} is a mapping from the indices of \icf{new} to the indices of \icf{old}.
+This will define \icf{new} such that \icf{new\ !\ i =\ old !\ (f\ i)}.
 
 Since the range of \icf{f} is unrestricted, the value at any index of the output array may depend on the value at any index of the input array.
 This complicates the partitioning of the work: although we can split the task of constructing the resulting array, we can't partition the input array between processors.
@@ -185,10 +189,23 @@ The result is that these permutations are \textit{de facto} synchronisation poin
 This has a potentially interesting interaction with data fission: normally, a map composed with a backpermute would be fused together in some fashion.
 We may ask the question: when is it worth fissioning data for the map before recombining for the permutation, and when is the fused operation preferred?
 
+\subsection{Scheduling}
+\red{compare: static, dynamic}
+
 \section{Previous Work}
 
 \subsection{Heterogeneous Scheduling}
-Previous work on scheduling a parallelisable workload onto heterogeneous processors has explored solutions in low-level contexts, and has encountered a variety of obstacles.
+
+\subsubsection*{Skynet Compiler}
+\citet*{grewe_static_????} use machine learning over a feature space of OpenCL source code to determine how to partition work over processors.
+The learning-based model is trained on the static code features of OpenCL programs, along with their optimal work partitions.
+The trained model is used to categorise subsequent OpenCL programs by their static code features.
+This categorisation subsequently guides the partitioning of work.
+However, the method by which the compiler separates work is not specified.
+
+In addition to the novel methodoloy, the paper finds very direct empirical evidence of the importance of work partitioning.
+Figure 2 of the referenced paper displays the performance of several benchmarks against the ratio of work split between the GPU and CPU.
+The heterogeneity of the results validates the search for effective, kernel-dependant workload partitioning.
 
 \subsubsection*{Binary Analysis}
 In work by \citet*{lee_transparent_2013}, the authors construct a framework that takes a users' data parallel OpenCL kernel and partitions the work across devices.
@@ -198,14 +215,79 @@ Kernels are split at runtime using a decision tree heuristic, using approximatio
 These parameters are estimated by the partitioning system, however it is not mentioned what the method of estimation is.
 
 To determine whether a workload can be safely separated to several devices, data flow analysis is used on array indexing.
-If the data flow analysis does not sufficiently guarantee safe array access, the kernel is considered un-parallelisable.
+If the data flow analysis does not sufficiently guarantee safe array access patterns, the kernel is considered contiguous and thus not parallelisable.
 This is an example of where a higher-level abstraction may have assisted in splitting the workload.
 These are both potentially interesting directions for research on improving Accelerate, however they are beyond the current scope.
 
-\subsubsection*{Profiling}
+\subsubsection*{Dynamic Profiling}
+\citet*{wang_cpu+gpu_2014} review several heterogeneous scheduling algorithms (which they refer to as `co-scheduling'), and compare against their own novel algorithm.
+Although static scheduling is discussed, the focus is on methods that use dynamic profiling to achieve workload balance across processors.
+Two competing dynamic scheduling algorithms are described: \textit{quick scheduling} and \textit{split scheduling}.
+All of the dynamic scheduling algorithms discussed rely on the workload being split into some collection of iterations or fragments beforehand.
 
+Quick scheduling uses static scheduling on some small, initial part of the workload.
+By measuring performance in this first stage, the rest of the workload is appropriately partitioned between processors.
+The authors remark that, since the performance of the GPU may depend on the workload, this single initial profiling step may lead to a partitioning of work that is inefficient for the rest of the program.
+This is similar to one of the initial scheduling plans for this project.
 
-\subsection{Array DSLs}
+Split scheduling is a form of `iterated quick scheduling': the profiling data from one chunk of workload is used to partition the workload for the next chunk.
+Since data is synchronised between each work division, there is significant overhead due to the increased frequency of profiling relative to quick scheduling.
+
+The novel algorithm proposed by the authors (Co-scheduling based on Asymptotic Profiling, or CAP) lies between quick and split scheduling.
+In particular, workload chunks are only profiled if performance has changed substantially.
+Otherwise, chunks are scheduled in progressively larger increments, helping to reduce synchronisation overhead.
+
+In their results, the authors find that their algorithm is competitive with the other dynamic scheduling algorithms in terms of overall speed.
+In addition, they find a reduction in the spread between GPU and CPU execution times.
+The implementation of these varied algorithms may be a valuable extension for our thesis, or a future project.
+
+The contributions of the paper are purely towards the scheduling algorithm.
+The code to run workloads on the GPU and CPU was written by hand, with the scheduler taking the form of `glue code' in-between.
+Although all the discussed algorithms rely on the workload being split into a large number of  `iterations', it is not specified in the paper how this workload splitting is performed.
+The automation of these steps is an important part of the value of frameworks like Accelerate.
+
+\subsection{Parallel DSLs}
+
+\subsubsection*{Data Parallel Haskell}
+Data Parallel Haskell (DPH) is a generic parallelism extension to the Glasgow Haskell Compiler.
+For DPH, the focus is on \textit{nested data parallelism}, exploring and expanding on the work of the NESL language. \citep{chakravarty_data_2007}
+While Accelerate uses some features of the Haskell type system to statically \textit{forbid} nested parallelism, DPH instead adds \textit{flattening} to the collection of representation transformations, converting nested parallel operations on a nested array into scalar operations on a flat array.
+
+\subsubsection*{Copperhead}
+Copperhead is a GPU programming EDSL hosted in the Python programming language. \citep{catanzaro_copperhead:_2011}
+Currently, it targets the CUDA architecture.
+It has a similar set of combinators to most array DSLs.
+Since it is hosted in Python, expressions are untyped until executed, which leaves many potential common programmer errors unchecked until runtime.
+
+Similarly to DPH, Copperhead supports nested parallelism.
+However, while DPH follows in the tradition of handling nested parallelism through flattening, Copperhead attempts to follow the heirarchial parallelism of modern GPU architectures.
+In particular, the CUDA programming model has a heirarchy of \textit{kernels} running \textit{thread blocks}, which in turn contain \textit{device threads}.
+When possible, nested parallelism in Copperhead is mapped onto this heirarchy.
+
+For fusion and similar optimisations, the compiler must perform `shape analysis' at run-time to determine the compatability of array sizes.
+This contrasts with Accelerate, which uses \red{fancy type-level shenanigans} to ensure shape compatability.
+
+Copperhead has limited support for targeting heterogeneous systems.
+Devices must be declared explicitly, and any given computation targets a single device, implying that any scheduling must be done by the user.
+
+\subsubsection*{Dandelion}
+Dandelion is a .NET extension offering a compiler and runtime for heterogeneous systems, targeting the F\# and C\# languages. \citep{rossbach_dandelion:_2013}
+LINQ is essentially a DSL within the .NET framework for describing operations over iterable collections in a monadic fashion.
+Dandelion supports lifting most LINQ operations to the GPU.
+It does so by using the Common Compiler Interface to convert .NET bytecode to CUDA source.
+
+This binary analysis step has similar issues to those encountered by \citet{lee_transparent_2013}.
+In particular, converting heap allocations to stack allocations requires data flow analysis to construct a static size for the original allocation.
+If an allocation cannot be statically sized, the conversion fails.
+The binary translation process also makes assumptions about purity of user-defined functions, which are not checked.
+Combinator optimisations, like map fusion, are not implemented.
+
+Dandelion uses explicit reasoning on a data-flow, task-dependency graph to implement heterogeneous scheduling and work division.
+The graph is constructed through an intermediate engine called PTask, which describes various primitives for encoding iterative processes between data sources and sinks.
+Many of the concepts are similar to those from stream processing; future work may try and translate some subset to Accelerate.
+
+In addition to targeting CPU and GPU backends, Dandelion also supports distributed cluster computing as part of its model of heterogeneous systems.
+This is an interesting and natural extension of the concept of `write once, parallelise everywhere' described by \citet{newton_converting_2014}.
 
 \subsection{Heterogeneous Scheduling in Accelerate}
 A recent (at the time of writing, unpublished) paper by \citet*{newton_converting_2014} describes a first foray into heterogeneous scheduling in Accelerate.
@@ -246,7 +328,6 @@ We can improve on this by determining the degree of fissioning and the allocatio
 \red{Currently can't have several devices working on a `different part of the program' at the same time. Need to clarify.}
 
 \subsection{Small Array Optimisations}
-One minor issue not addressed by existing approaches to heterogeneous resource scheduling is the cost of operations on small arrays.
 Loading, running, and using the result of a GPU kernel has significant overhead.
 Below a certain array size, the processing time of operations on an array is dominated by the high latencies of both loading the GPU kernel and data transfer between the CPU and GPU.
 
